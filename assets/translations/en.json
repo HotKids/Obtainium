@@ -273,6 +273,8 @@
         "one": "{} minute",
         "other": "{} minutes"
     },
+    "mobileCountryCode": "Mobile country code (MCC)",
+    "mobileNetworkCode": "Mobile network code (MNC)",
     "more": "More",
     "moveNonInstalledAppsToBottom": "Move non-installed apps to bottom of apps view",
     "multipleSigners": "Multiple Signers",

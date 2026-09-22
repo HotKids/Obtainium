@@ -108,6 +108,22 @@ class SamsungGalaxyStore extends AppSource {
         hint: 'DBT',
       ),
     ],
+    [
+      GeneratedFormTextField(
+        'mcc',
+        label: tr('mobileCountryCode'),
+        required: false,
+        hint: '425',
+      ),
+    ],
+    [
+      GeneratedFormTextField(
+        'mnc',
+        label: tr('mobileNetworkCode'),
+        required: false,
+        hint: '01',
+      ),
+    ],
   ];
 
   @override
@@ -129,6 +145,8 @@ class SamsungGalaxyStore extends AppSource {
     final csc = additionalSettings['csc']?.toString().isNotEmpty == true
         ? additionalSettings['csc'].toString()
         : 'DBT';
+    final mcc = additionalSettings['mcc']?.toString().trim() ?? '';
+    final mnc = additionalSettings['mnc']?.toString().trim() ?? '';
 
     final sdkVer = await _getSdkVersion();
 
@@ -138,8 +156,8 @@ class SamsungGalaxyStore extends AppSource {
               queryParameters: {
                 'appId': packageName,
                 'deviceId': deviceId,
-                'mcc': '425',
-                'mnc': '01',
+                'mcc': mcc.isEmpty ? '425' : mcc,
+                'mnc': mnc.isEmpty ? '01' : mnc,
                 'csc': csc,
                 'sdkVer': sdkVer,
                 'systemId': '1608665720954',

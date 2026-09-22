@@ -201,6 +201,19 @@ Override the contract methods you need:
 - `filterApks`, `filterApksByArch`, `extractVersion`, `findStandardFormatsForVersion`,
   `getLinksFromParsedHTML`, `getApkUrlsFromUrls`.
 
+### Samsung Galaxy Store settings
+
+Galaxy Store requests support per-app overrides for device model (`deviceId`),
+CSC (`csc`), mobile country code (`mcc`), and mobile network code (`mnc`). Empty
+fields retain the defaults `SM-S948B`, `DBT`, `425`, and `01`, respectively.
+MCC and MNC are strings so values such as MNC `00` keep their leading zeros.
+
+For example, Samsung Assistant (`com.samsung.android.app.sreminder`) can be
+queried with device model `SM-S9480`, CSC `CHC`, MCC `460`, and MNC `00` for
+the China release. Changing only the device model and CSC leaves the default
+network codes in the request and may not match the app's distribution conditions.
+Availability still depends on the requested app, device, and Android SDK version.
+
 ### `SourceProvider` (the service)
 
 - **Singleton** (`factory SourceProvider() => _instance`). All `SourceProvider()` calls

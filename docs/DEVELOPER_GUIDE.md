@@ -214,6 +214,19 @@ the China release. Changing only the device model and CSC leaves the default
 network codes in the request and may not match the app's distribution conditions.
 Availability still depends on the requested app, device, and Android SDK version.
 
+For apps explicitly configured with CSC `CHC` and MCC `460`, a failed stub
+request falls back to China's ODS endpoint (`cn-ms.galaxyappstore.com/ods.as`).
+It sends `getDownloadInfo` (`2298`) followed by `downloadForRestore` (`2316`),
+reusing the configured device, network codes, and detected Android SDK. Successful
+stub requests and non-China configurations retain the existing behavior.
+
+The ODS flow uses a generated anonymous identity for both requests and requires
+matching package/product/version and full APK size. Login-required or
+non-installable apps fail before download authorization. It uses `downLoadURI`
+for the full APK; universal `32n64` packages are accepted. XML payloads use the
+existing `sourceRequest` transport with redirects disabled for ODS POSTs.
+No account credentials or additional settings are needed for the fallback.
+
 ### `SourceProvider` (the service)
 
 - **Singleton** (`factory SourceProvider() => _instance`). All `SourceProvider()` calls

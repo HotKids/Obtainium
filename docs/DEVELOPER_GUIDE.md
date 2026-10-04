@@ -203,15 +203,15 @@ Override the contract methods you need:
 
 ### Samsung Galaxy Store settings
 
-Galaxy Store requests support per-app overrides for device model (`deviceId`),
-CSC (`csc`), mobile country code (`mcc`), and mobile network code (`mnc`). Empty
-fields retain the defaults `SM-S948B`, `DBT`, `425`, and `01`, respectively.
-MCC and MNC are strings so values such as MNC `00` keep their leading zeros.
+Galaxy Store exposes per-app device model (`deviceId`) and CSC (`csc`) settings.
+Empty fields retain the defaults `SM-S948B` and `DBT`. CSC `CHC` automatically
+selects mobile country code `460` and mobile network code `00`; other CSCs retain
+the existing `425` and `01` defaults. CHC matching ignores case and surrounding
+whitespace. Previously stored nonempty `mcc` and `mnc` settings still override
+these defaults independently. They remain strings to preserve leading zeros.
 
 For example, Samsung Assistant (`com.samsung.android.app.sreminder`) can be
-queried with device model `SM-S9480`, CSC `CHC`, MCC `460`, and MNC `00` for
-the China release. Changing only the device model and CSC leaves the default
-network codes in the request and may not match the app's distribution conditions.
+queried with device model `SM-S9480` and CSC `CHC` for the China release.
 Availability still depends on the requested app, device, and Android SDK version.
 
 For apps explicitly configured with CSC `CHC` and MCC `460`, a failed stub

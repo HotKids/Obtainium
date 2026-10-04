@@ -364,22 +364,6 @@ class SamsungGalaxyStore extends AppSource {
         hint: 'DBT',
       ),
     ],
-    [
-      GeneratedFormTextField(
-        'mcc',
-        label: tr('mobileCountryCode'),
-        required: false,
-        hint: '425',
-      ),
-    ],
-    [
-      GeneratedFormTextField(
-        'mnc',
-        label: tr('mobileNetworkCode'),
-        required: false,
-        hint: '01',
-      ),
-    ],
   ];
 
   @override
@@ -401,6 +385,7 @@ class SamsungGalaxyStore extends AppSource {
     final csc = additionalSettings['csc']?.toString().isNotEmpty == true
         ? additionalSettings['csc'].toString()
         : 'DBT';
+    final isChina = csc.trim().toUpperCase() == 'CHC';
     final mcc = additionalSettings['mcc']?.toString().trim() ?? '';
     final mnc = additionalSettings['mnc']?.toString().trim() ?? '';
 
@@ -408,10 +393,10 @@ class SamsungGalaxyStore extends AppSource {
 
     final device = {
       'deviceId': deviceId,
-      'csc': csc,
+      'csc': isChina ? 'CHC' : csc,
       'sdkVer': sdkVer,
-      'mcc': mcc.isEmpty ? '425' : mcc,
-      'mnc': mnc.isEmpty ? '01' : mnc,
+      'mcc': mcc.isEmpty ? (isChina ? '460' : '425') : mcc,
+      'mnc': mnc.isEmpty ? (isChina ? '00' : '01') : mnc,
     };
     try {
       return await _getStubDetails(
@@ -422,7 +407,7 @@ class SamsungGalaxyStore extends AppSource {
       );
     } catch (_) {
       // Only explicitly configured mainland-China apps use the CN service.
-      if (csc.toUpperCase() != 'CHC' || device['mcc'] != '460') rethrow;
+      if (!isChina || device['mcc'] != '460') rethrow;
       return _getCnOdsDetails(packageName, device, additionalSettings);
     }
   }

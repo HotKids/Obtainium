@@ -78,12 +78,7 @@ const _grant = {
       'https://cdnet-dn.galaxyappstore.com/App_20260923000000.apk?token=temporary',
   'deltaDownloadURI': 'https://cdnet-dn.galaxyappstore.com/delta.apk',
 };
-const _china = {
-  'deviceId': 'SM-S9480',
-  'csc': 'CHC',
-  'mcc': '460',
-  'mnc': '00',
-};
+const _china = {'deviceId': 'SM-S9480', 'csc': 'CHC'};
 
 class _RecordingGalaxyStore extends SamsungGalaxyStore {
   late Uri requestUri;
@@ -123,53 +118,98 @@ void main() {
     }
   });
 
-  test('uses per-app China settings and preserves MNC leading zeros', () async {
-    final source = _RecordingGalaxyStore();
-    final result = await source.getLatestAPKDetails(url, {
-      'deviceId': 'SM-S9480',
-      'csc': 'CHC',
-      'mcc': ' 460 ',
-      'mnc': ' 00 ',
-    });
+  test(
+    'only CHC selects China network defaults and normalizes its CSC',
+    () async {
+      for (final csc in ['CHC', 'chc', ' CHC ']) {
+        final source = _RecordingGalaxyStore();
+        await source.getLatestAPKDetails(url, {'csc': csc});
+        expect(source.requestUri.queryParameters['csc'], 'CHC');
+        expect(source.requestUri.queryParameters['mcc'], '460');
+        expect(source.requestUri.queryParameters['mnc'], '00');
+        expect(source.requestUri.queryParameters['deviceId'], 'SM-S948B');
+      }
+      for (final csc in ['DBT', 'XAA', 'dbt', ' DBT ']) {
+        final source = _RecordingGalaxyStore();
+        await source.getLatestAPKDetails(url, {'csc': csc});
+        expect(source.requestUri.queryParameters['csc'], csc);
+        expect(source.requestUri.queryParameters['mcc'], '425');
+        expect(source.requestUri.queryParameters['mnc'], '01');
+      }
+    },
+  );
 
-    expect(source.requestUri.host, 'vas.samsungapps.com');
-    expect(source.requestUri.path, '/stub/stubDownload.as');
-    expect(source.requestUri.queryParameters, containsPair('mcc', '460'));
-    expect(source.requestUri.queryParameters, containsPair('mnc', '00'));
-    expect(source.requestUri.queryParameters, containsPair('csc', 'CHC'));
-    expect(
-      source.requestUri.queryParameters,
-      containsPair('deviceId', 'SM-S9480'),
-    );
-    expect(
-      source.requestUri.queryParameters,
-      containsPair('appId', 'com.samsung.android.app.sreminder'),
-    );
-    expect(result.version, '9.4.02.7');
-    expect(result.apkUrls.single.key, 'com.samsung.android.app.sreminder.apk');
-  });
+  test(
+    'uses persisted network overrides and preserves MNC leading zeros',
+    () async {
+      final source = _RecordingGalaxyStore();
+      final result = await source.getLatestAPKDetails(url, {
+        'deviceId': 'SM-S9480',
+        'csc': 'CHC',
+        'mcc': ' 310 ',
+        'mnc': ' 00 ',
+      });
 
-  test('allows either network code to be overridden independently', () async {
-    final source = _RecordingGalaxyStore();
-    await source.getLatestAPKDetails(url, {'mcc': '310'});
-    expect(source.requestUri.queryParameters['mcc'], '310');
-    expect(source.requestUri.queryParameters['mnc'], '01');
+      expect(source.requestUri.host, 'vas.samsungapps.com');
+      expect(source.requestUri.path, '/stub/stubDownload.as');
+      expect(source.requestUri.queryParameters, containsPair('mcc', '310'));
+      expect(source.requestUri.queryParameters, containsPair('mnc', '00'));
+      expect(source.requestUri.queryParameters, containsPair('csc', 'CHC'));
+      expect(
+        source.requestUri.queryParameters,
+        containsPair('deviceId', 'SM-S9480'),
+      );
+      expect(
+        source.requestUri.queryParameters,
+        containsPair('appId', 'com.samsung.android.app.sreminder'),
+      );
+      expect(result.version, '9.4.02.7');
+      expect(
+        result.apkUrls.single.key,
+        'com.samsung.android.app.sreminder.apk',
+      );
+    },
+  );
 
-    await source.getLatestAPKDetails(url, {'mnc': '001'});
-    expect(source.requestUri.queryParameters['mcc'], '425');
-    expect(source.requestUri.queryParameters['mnc'], '001');
-  });
+  test(
+    'allows persisted network codes to override either default independently',
+    () async {
+      final source = _RecordingGalaxyStore();
+      await source.getLatestAPKDetails(url, {'mcc': '310'});
+      expect(source.requestUri.queryParameters['mcc'], '310');
+      expect(source.requestUri.queryParameters['mnc'], '01');
 
-  test('exposes optional network code text fields in the app settings', () {
-    final fields = SamsungGalaxyStore()
+      await source.getLatestAPKDetails(url, {'mnc': '001'});
+      expect(source.requestUri.queryParameters['mcc'], '425');
+      expect(source.requestUri.queryParameters['mnc'], '001');
+
+      await source.getLatestAPKDetails(url, {'csc': 'CHC', 'mcc': '310'});
+      expect(source.requestUri.queryParameters['mcc'], '310');
+      expect(source.requestUri.queryParameters['mnc'], '00');
+
+      await source.getLatestAPKDetails(url, {'csc': 'CHC', 'mnc': '001'});
+      expect(source.requestUri.queryParameters['mcc'], '460');
+      expect(source.requestUri.queryParameters['mnc'], '001');
+
+      await source.getLatestAPKDetails(url, {
+        'csc': 'CHC',
+        'mcc': ' ',
+        'mnc': '',
+      });
+      expect(source.requestUri.queryParameters['mcc'], '460');
+      expect(source.requestUri.queryParameters['mnc'], '00');
+    },
+  );
+
+  test('keeps network codes out of the app settings form', () {
+    final keys = SamsungGalaxyStore()
         .additionalSourceAppSpecificSettingFormItems
         .expand((row) => row)
-        .whereType<GeneratedFormTextField>();
-    for (final key in ['mcc', 'mnc']) {
-      final field = fields.singleWhere((field) => field.key == key);
-      expect(field.required, isFalse);
-      expect(field.value, '');
-    }
+        .whereType<GeneratedFormTextField>()
+        .map((field) => field.key);
+    expect(keys, containsAll(['deviceId', 'csc']));
+    expect(keys, isNot(contains('mcc')));
+    expect(keys, isNot(contains('mnc')));
   });
 
   test('CN stub failure uses stateless ODS full APK authorization', () async {
@@ -310,14 +350,24 @@ void main() {
   );
 
   test(
-    'CN HTTP failure also falls back; default and non-CN settings do not',
+    'CHC alone enables ODS fallback; other CSCs and MCC overrides do not',
     () async {
       final cn = _OdsGalaxyStore([
         Response('Unavailable', 503),
         _ods(_metadata),
         _ods(_grant),
       ]);
-      expect((await cn.getLatestAPKDetails(url, _china)).version, '9.4.02.7');
+      expect(
+        (await cn.getLatestAPKDetails(url, {'csc': ' chc '})).version,
+        '9.4.02.7',
+      );
+      for (final request in cn.requests.skip(1)) {
+        final root = XmlDocument.parse(request.body as String).rootElement;
+        expect(root.getAttribute('csc'), 'CHC');
+        expect(root.getAttribute('mcc'), '460');
+        expect(root.getAttribute('mnc'), '00');
+        expect(root.getAttribute('deviceModel'), 'SM-S948B');
+      }
       final disconnected = _OdsGalaxyStore([
         const SocketException('stub unavailable'),
         _ods(_metadata),
@@ -330,7 +380,7 @@ void main() {
       for (final settings in [
         <String, dynamic>{},
         {'csc': 'XAA', 'mcc': '310'},
-        {'csc': 'CHC'},
+        {'csc': 'CHC', 'mcc': '310'},
       ]) {
         final source = _OdsGalaxyStore([
           Response('<result><resultCode>0</resultCode></result>', 200),

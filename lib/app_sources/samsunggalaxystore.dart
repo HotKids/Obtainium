@@ -54,6 +54,7 @@ class SamsungGalaxyStore extends AppSource {
     'downloadURI',
     'needToLogin',
     'installableYN',
+    'linkProductYn',
     'countryURL',
     'countryCode',
     'MCC',
@@ -154,7 +155,7 @@ class SamsungGalaxyStore extends AppSource {
     }
   }
 
-  Uri _downloadUri(String raw) {
+  Uri _downloadUri(String raw, {bool forLinkedProduct = false}) {
     final uri = Uri.tryParse(raw);
     if (uri == null ||
         uri.scheme != 'https' ||
@@ -163,10 +164,11 @@ class SamsungGalaxyStore extends AppSource {
         uri.hasFragment ||
         RegExp(r'[\s\\]').hasMatch(raw) ||
         uri.pathSegments.where((segment) => segment.isNotEmpty).isEmpty ||
-        ![
-          'samsungapps.com',
-          'galaxyappstore.com',
-        ].any((host) => uri.host == host || uri.host.endsWith('.$host'))) {
+        !([
+              'samsungapps.com',
+              'galaxyappstore.com',
+            ].any((host) => uri.host == host || uri.host.endsWith('.$host')) ||
+            (forLinkedProduct && uri.host == 'auto-dd.myapp.com'))) {
       throw NoAPKError();
     }
     return uri;
@@ -498,6 +500,8 @@ class SamsungGalaxyStore extends AppSource {
         versionCode <= 0 ||
         (metadata.containsKey('realContentsSize') &&
             (metadataSize == null || metadataSize <= 0)) ||
+        (metadata.containsKey('linkProductYn') &&
+            !['0', '1'].contains(metadata['linkProductYn'])) ||
         !['0', '1'].contains(metadata['needToLogin']) ||
         !['Y', 'N'].contains(metadata['installableYN'])) {
       throw ObtainiumError(tr('unexpectedStoreApiResponse'), unexpected: true);
@@ -506,6 +510,25 @@ class SamsungGalaxyStore extends AppSource {
       throw ObtainiumError(tr('samsungGalaxyStoreLoginRequired'));
     }
     if (metadata['installableYN'] != 'Y') throw NoAPKError();
+    final linkedProduct = metadata['linkProductYn'] == '1';
+    if (linkedProduct && (!_isChina(device) || metadataSize == null)) {
+      throw NoAPKError();
+    }
+    Future<Map<String, String>> mirrorGrant() => _odsRequest(
+      'downloadInfoForTencent',
+      '2801',
+      {
+        'GUID': packageName,
+        'stduk': identity,
+        'extuk': identity,
+        'tencentSource': 'general',
+        'lastInterfaceName': 'searchProductListEx2Notc',
+      },
+      device,
+      identity,
+      settings,
+      endpoint: endpoint,
+    );
     final authorizationParams = {
       'GUID': packageName,
       'productID': productId,
@@ -517,58 +540,51 @@ class SamsungGalaxyStore extends AppSource {
     Map<String, String> grant;
     var usedRestoreAuthorization = false;
     var usedMirror = false;
-    try {
-      // versionCode here describes an installed version, not the target APK.
-      // Omitting it requests a full package without assuming local installation.
-      grant = await _odsRequest(
-        'downloadEx2',
-        '2311',
-        {...authorizationParams, 'dowloadType': 'new', 'deepLinkSource': 'N'},
-        device,
-        identity,
-        settings,
-        endpoint: endpoint,
-      );
-    } on _OdsRejected {
-      usedRestoreAuthorization = true;
+    if (linkedProduct) {
+      usedMirror = true;
+      grant = await mirrorGrant();
+    } else {
       try {
+        // versionCode here describes an installed version, not the target APK.
+        // Omitting it requests a full package without assuming local installation.
         grant = await _odsRequest(
-          'downloadForRestore',
-          '2316',
-          {
-            ...authorizationParams,
-            'downloadType': 'new',
-            'triggeredFrom': 'DETAIL_PAGE',
-            'deepLinkSource': '',
-          },
+          'downloadEx2',
+          '2311',
+          {...authorizationParams, 'dowloadType': 'new', 'deepLinkSource': 'N'},
           device,
           identity,
           settings,
           endpoint: endpoint,
         );
       } on _OdsRejected {
-        if (!_isChina(device) || metadataSize == null) rethrow;
-        usedMirror = true;
-        grant = await _odsRequest(
-          'downloadInfoForTencent',
-          '2801',
-          {
-            'GUID': packageName,
-            'stduk': identity,
-            'extuk': identity,
-            'tencentSource': 'general',
-            'lastInterfaceName': 'searchProductListEx2Notc',
-          },
-          device,
-          identity,
-          settings,
-          endpoint: endpoint,
-        );
+        usedRestoreAuthorization = true;
+        try {
+          grant = await _odsRequest(
+            'downloadForRestore',
+            '2316',
+            {
+              ...authorizationParams,
+              'downloadType': 'new',
+              'triggeredFrom': 'DETAIL_PAGE',
+              'deepLinkSource': '',
+            },
+            device,
+            identity,
+            settings,
+            endpoint: endpoint,
+          );
+        } on _OdsRejected {
+          if (!_isChina(device) || metadataSize == null) rethrow;
+          usedMirror = true;
+          grant = await mirrorGrant();
+        }
       }
     }
     final size = int.tryParse(grant['contentsSize'] ?? '') ?? 0;
-    if (grant['productID'] != productId ||
-        ((usedMirror || grant.containsKey('GUID')) &&
+    // Linked replies omit package/product echoes; bind their release to 2298.
+    if (((!linkedProduct || grant.containsKey('productID')) &&
+            grant['productID'] != productId) ||
+        (((usedMirror && !linkedProduct) || grant.containsKey('GUID')) &&
             grant['GUID'] != packageName) ||
         ((!usedRestoreAuthorization ||
                 usedMirror ||
@@ -584,7 +600,10 @@ class SamsungGalaxyStore extends AppSource {
     }
     // downLoadURI is the full APK, including universal 32n64 packages.
     // binaryArch does not indicate whether an APK is a delta.
-    final apkUrl = _downloadUri(grant['downLoadURI'] ?? '');
+    final apkUrl = _downloadUri(
+      grant['downLoadURI'] ?? '',
+      forLinkedProduct: linkedProduct,
+    );
     return _withStoreDetails(
       APKDetails(
         version,

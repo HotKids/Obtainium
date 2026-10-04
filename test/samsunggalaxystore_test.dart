@@ -166,6 +166,25 @@ const _grant = {
   'deltaDownloadURI': 'https://cdnet-dn.galaxyappstore.com/delta.apk',
 };
 const _china = {'deviceId': 'SM-S9480', 'csc': 'CHC'};
+const _linkedUrl = 'https://apps.galaxyappstore.com/detail/com.shuge.fitness';
+const _linkedMetadata = {
+  'GUID': 'com.shuge.fitness',
+  'productID': '000006798608',
+  'productName': 'Example Linked App',
+  'version': '4.6.32',
+  'versionCode': '103',
+  'needToLogin': '0',
+  'installableYN': 'Y',
+  'realContentsSize': '93625737',
+  'linkProductYn': '1',
+};
+const _linkedGrant = {
+  'appId': 'tencent-catalog-id',
+  'version': '4.6.32',
+  'versionCode': '103',
+  'contentsSize': '93625737',
+  'downLoadURI': 'https://auto-dd.myapp.com/synthetic/full.apk?token=temporary',
+};
 const _overview = {
   'version': '9.4.02.7',
   'realContentsSize': '106232505',
@@ -979,6 +998,279 @@ void main() {
       );
     },
   );
+
+  test(
+    'CN linked products use the version-bound Tencent full APK directly',
+    () async {
+      for (final identityFields in [
+        <String, String>{},
+        {
+          'GUID': _linkedMetadata['GUID']!,
+          'productID': _linkedMetadata['productID']!,
+        },
+      ]) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(_linkedMetadata),
+          _ods({..._linkedGrant, ...identityFields}),
+        ]);
+        final result = await source.getLatestAPKDetails(_linkedUrl, _china);
+        expect(result.version, '4.6.32');
+        expect(result.names.name, 'Example Linked App');
+        expect(result.apkUrls.single.key, 'com.shuge.fitness.apk');
+        expect(result.apkUrls.single.value, _linkedGrant['downLoadURI']);
+        expect(source.coreRequests.map((r) => r.uri.queryParameters['reqId']), [
+          null,
+          '2298',
+          '2801',
+        ]);
+        final request = XmlDocument.parse(
+          source.coreRequests.last.body as String,
+        ).rootElement.getElement('request')!;
+        expect(request.getAttribute('name'), 'downloadInfoForTencent');
+        final params = {
+          for (final p in request.childElements)
+            p.getAttribute('name')!: p.innerText,
+        };
+        expect(params['GUID'], 'com.shuge.fitness');
+        expect(params['lastInterfaceName'], 'searchProductListEx2Notc');
+        expect(params['stduk'], params['extuk']);
+        expect(params, isNot(contains('orderID')));
+        expect(source.responses, isEmpty);
+      }
+    },
+  );
+
+  test(
+    'absent or native linked flags keep stateless Samsung authorization',
+    () async {
+      for (final flag in [null, '0']) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods({..._metadata, 'linkProductYn': ?flag}),
+          _ods(_grant),
+        ]);
+        final result = await source.getLatestAPKDetails(url, _china);
+        expect(result.apkUrls.single.value, _grant['downLoadURI']);
+        expect(source.coreRequests.map((r) => r.uri.queryParameters['reqId']), [
+          null,
+          '2298',
+          '2311',
+        ]);
+      }
+    },
+  );
+
+  test('linked metadata rejects unknown flags and structured shadows', () async {
+    for (final response in [
+      for (final flag in ['', 'Y', '2', '-1'])
+        _ods({..._linkedMetadata, 'linkProductYn': flag}),
+      _ods(_linkedMetadata, extra: '<value name="linkProductYn">0</value>'),
+      _ods(
+        _linkedMetadata,
+        extra:
+            '<extList name="linkProductYn"><value name="nested">1</value></extList>',
+      ),
+    ]) {
+      final source = _OdsGalaxyStore([
+        Response('Unavailable', 503),
+        response,
+        _ods(_linkedGrant),
+      ]);
+      await expectLater(
+        source.getLatestAPKDetails(_linkedUrl, _china),
+        throwsA(isA<ObtainiumError>()),
+      );
+      expect(source.coreRequests.length, 2);
+      expect(source.responses.length, 1);
+    }
+  });
+
+  test(
+    'linked authorization requires China and a known full package size',
+    () async {
+      for (final settings in [<String, dynamic>{}, _china]) {
+        final metadata = {..._linkedMetadata};
+        if (settings == _china) metadata.remove('realContentsSize');
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(metadata),
+          _ods(_linkedGrant),
+        ]);
+        await expectLater(
+          source.getLatestAPKDetails(_linkedUrl, settings),
+          throwsA(isA<NoAPKError>()),
+        );
+        expect(source.coreRequests.length, 2);
+        expect(source.responses.length, 1);
+      }
+    },
+  );
+
+  test(
+    'linked grants reject release drift and conflicting optional identities',
+    () async {
+      for (final changes in [
+        {'GUID': ''},
+        {'GUID': 'com.other.app'},
+        {'productID': ''},
+        {'productID': '000006759407'},
+        {'version': ''},
+        {'version': '4.6.33'},
+        {'versionCode': ''},
+        {'versionCode': '104'},
+        {'contentsSize': ''},
+        {'contentsSize': '125317027'},
+      ]) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(_linkedMetadata),
+          _ods({..._linkedGrant, ...changes}),
+          _ods(_grant),
+        ]);
+        await expectLater(
+          source.getLatestAPKDetails(_linkedUrl, _china),
+          throwsA(isA<ObtainiumError>()),
+        );
+        expect(source.coreRequests.last.uri.queryParameters['reqId'], '2801');
+        expect(source.responses.length, 1);
+      }
+    },
+  );
+
+  test(
+    'linked Tencent URLs retain exact host and HTTPS restrictions',
+    () async {
+      for (final apkUrl in [
+        'http://auto-dd.myapp.com/a.apk',
+        'https://myapp.com/a.apk',
+        'https://other.myapp.com/a.apk',
+        'https://auto-dd.myapp.com.evil.test/a.apk',
+        'https://child.auto-dd.myapp.com/a.apk',
+        'https://auto-dd.myapp.com:444/a.apk',
+        'https://user@auto-dd.myapp.com/a.apk',
+        'https://auto-dd.myapp.com/a.apk#fragment',
+        'https://auto-dd.myapp.com/',
+        'https://auto-dd.myapp.com/a b.apk',
+      ]) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(_linkedMetadata),
+          _ods({..._linkedGrant, 'downLoadURI': apkUrl}),
+        ]);
+        await expectLater(
+          source.getLatestAPKDetails(_linkedUrl, _china),
+          throwsA(isA<NoAPKError>()),
+        );
+        expect(source.coreRequests.last.uri.queryParameters['reqId'], '2801');
+        expect(source.responses, isEmpty);
+      }
+    },
+  );
+
+  test(
+    'Tencent URLs remain invalid for native, restore and nonlinked mirrors',
+    () async {
+      final grant = _ods({
+        ..._grant,
+        'GUID': _metadata['GUID']!,
+        'downLoadURI': _linkedGrant['downLoadURI']!,
+      });
+      for (final rejections in [0, 1, 2]) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(_metadata),
+          for (var i = 0; i < rejections; i++) _ods({}, code: '4002'),
+          grant,
+        ]);
+        await expectLater(
+          source.getLatestAPKDetails(url, _china),
+          throwsA(isA<NoAPKError>()),
+        );
+        expect(source.responses, isEmpty);
+      }
+      final stub = _OdsGalaxyStore([
+        _stubResponse({'downloadURI': _linkedGrant['downLoadURI']!}),
+        _ods(_metadata),
+        _ods(_grant),
+      ]);
+      expect(
+        (await stub.getLatestAPKDetails(url, _china)).apkUrls.single.value,
+        _grant['downLoadURI'],
+      );
+      expect(
+        stub.coreRequests.elementAt(1).uri.queryParameters['reqId'],
+        '2298',
+      );
+    },
+  );
+
+  test(
+    'linked authorization rejection and rate limits never enter native fallback',
+    () async {
+      for (final response in [
+        _ods({}, code: '4002'),
+        Response('Rate limited', 429, headers: {'retry-after': '600'}),
+      ]) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(_linkedMetadata),
+          response,
+          _ods(_grant),
+        ]);
+        await expectLater(
+          source.getLatestAPKDetails(_linkedUrl, _china),
+          throwsA(
+            response.statusCode == 429
+                ? isA<RateLimitError>().having(
+                    (error) => error.remainingMinutes,
+                    'remainingMinutes',
+                    10,
+                  )
+                : isA<ObtainiumError>(),
+          ),
+        );
+        expect(source.coreRequests.last.uri.queryParameters['reqId'], '2801');
+        expect(source.responses.length, 1);
+      }
+    },
+  );
+
+  testWidgets('linked authorization timeout stops after its single request', (
+    tester,
+  ) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('dev.fluttercommunity.plus/device_info'),
+      (_) async => throw MissingPluginException(),
+    );
+    final source = _OdsGalaxyStore([
+      Response('Unavailable', 503),
+      _ods(_linkedMetadata),
+      Completer<Response>().future,
+      _ods(_grant),
+    ]);
+    var completed = false;
+    Object? failure;
+    final operation = source
+        .getLatestAPKDetails(_linkedUrl, _china)
+        .then<void>(
+          (_) => completed = true,
+          onError: (Object error) {
+            completed = true;
+            failure = error;
+          },
+        );
+    await tester.pump();
+    expect(source.coreRequests.last.uri.queryParameters['reqId'], '2801');
+    await tester.pump(const Duration(seconds: 39));
+    expect(completed, isFalse);
+    await tester.pump(const Duration(seconds: 1));
+    expect(completed, isTrue);
+    await operation;
+    expect(failure, isA<TimeoutException>());
+    expect(source.coreRequests.last.uri.queryParameters['reqId'], '2801');
+    expect(source.responses.length, 1);
+  });
 
   test(
     'mirror rejects partial identities, mismatches and third-party APK URLs',

@@ -223,9 +223,9 @@ trusted HTTP endpoints are upgraded to HTTPS. This preserves the existing
 Discovery failure uses a fixed China or global endpoint with the original
 request parameters.
 
-ODS queries `getDownloadInfo` (`2298`), then obtains a full APK through
-`downloadEx2` (`2311`). This stateless request omits the installed `versionCode`
-and uses the protocol spelling `dowloadType=new`. Only HTTP 400–599 responses
+ODS queries `getDownloadInfo` (`2298`). Native products then obtain a full APK
+through `downloadEx2` (`2311`). This stateless request omits the installed
+`versionCode` and uses the protocol spelling `dowloadType=new`. Only HTTP 400–599 responses
 that are not rate limits or a valid nonzero API rejection may retry
 `downloadForRestore` (`2316`). If both reject a
 China request with a known full-package size, `downloadInfoForTencent` (`2801`)
@@ -233,6 +233,16 @@ is attempted once. Its result must identify the exact package, product, version,
 version code, and full size and use a Samsung HTTPS APK URL. Partial or third-party
 mirror responses fail; no purchase or order requests are made. A successful
 anonymous `2801` response has not been demonstrated for Samsung Assistant.
+
+China linked products with `linkProductYn=1` and a known full-package size use
+`downloadInfoForTencent` (`2801`) directly. Linked replies must match the selected
+version, version code, and full size. They may omit `GUID` and `productID`, but
+either field must match when present; their `appId` is a Tencent catalog ID,
+not an Android package name. Only this branch additionally permits the exact
+HTTPS APK host `auto-dd.myapp.com`. Stub, native, restore, and nonlinked mirror
+responses retain the Samsung-only host restriction. Unknown linked flags,
+linked products outside China, or linked products without a full size fail
+before authorization. No purchase or order request is made.
 
 Stub and ODS responses reject malformed XML, duplicate critical fields,
 incorrect identities, mismatched grants, and unsafe APK URLs. ODS response IDs

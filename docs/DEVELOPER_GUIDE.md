@@ -214,24 +214,47 @@ For example, Samsung Assistant (`com.samsung.android.app.sreminder`) can be
 queried with device model `SM-S9480` and CSC `CHC` for the China release.
 Availability still depends on the requested app, device, and Android SDK version.
 
-For apps explicitly configured with CSC `CHC` and MCC `460`, a failed stub
-request falls back to China's ODS endpoint (`cn-ms.galaxyappstore.com/ods.as`).
-It sends `getDownloadInfo` (`2298`) followed by `downloadEx2` (`2311`), reusing
-the configured device, network codes, and detected Android SDK. This stateless
-full-package request omits `versionCode`, which Samsung interprets as an installed
-version, and uses the protocol's `dowloadType=new` spelling. If that authorization
-request fails with an HTTP or API error, it retries `downloadForRestore` (`2316`).
-Successful stub requests and non-China configurations retain the existing behavior.
+After a failed stub request, ODS uses the same configured device and network
+parameters. `CHC` with MCC `460` selects the China service; other configurations
+use the global service. `countrySearchEx` (`2300`) discovers the endpoint without
+changing MCC, MNC, or CSC. Only known Samsung ODS hosts and `/ods.as` are accepted;
+trusted HTTP endpoints are upgraded to HTTPS. This preserves the existing
+`425`/`01` global profile through the observed `il-odc.samsungapps.com` endpoint.
+Discovery failure uses a fixed China or global endpoint with the original
+request parameters.
 
-The ODS flow uses a generated anonymous identity for all requests and requires
-matching package/product/version and full APK size. The `2311` response must
-include both version fields; the restore response may omit them, but any fields
-it returns must match the metadata. Malformed XML, mismatched grants, and invalid
-download URLs do not trigger another authorization request. Login-required or
-non-installable apps fail before download authorization. It uses `downLoadURI`
-for the full APK; universal `32n64` packages are accepted. XML payloads use the
-existing `sourceRequest` transport with redirects disabled for ODS POSTs.
-No account credentials or additional settings are needed for the fallback.
+ODS queries `getDownloadInfo` (`2298`), then obtains a full APK through
+`downloadEx2` (`2311`). This stateless request omits the installed `versionCode`
+and uses the protocol spelling `dowloadType=new`. Only HTTP 400–599 or a valid
+nonzero API rejection may retry `downloadForRestore` (`2316`). If both reject a
+China request with a known full-package size, `downloadInfoForTencent` (`2801`)
+is attempted once. Its result must identify the exact package, product, version,
+version code, and full size and use a Samsung HTTPS APK URL. Partial or third-party
+mirror responses fail; no purchase or order requests are made. A successful
+anonymous `2801` response has not been demonstrated for Samsung Assistant.
+
+Stub and ODS responses reject malformed XML, duplicate critical fields,
+incorrect identities, mismatched grants, and unsafe APK URLs. ODS response IDs
+must match the requested interface. Login-required or non-installable metadata
+fails before authorization. Full APKs, including universal `32n64` packages, are
+accepted; delta URLs are unused. ODS POST redirects are disabled and headers do
+not affect APK transfers.
+
+Optional store dates and publisher notes use same-endpoint main (`2290`),
+overview (`2291`), and main (`2290`) requests. Both main responses must match the
+selected package, product, version, version code, and full size; overview must
+match its version and size. This binds overview fields that omit package and
+version code. Structured display branches are ignored while critical fields
+remain unique scalar values. The validated overview `lastUpdateDate` populates
+`releaseDate`; APK filename timestamps are not release dates. Publisher
+`updateDescription` populates `changeLog` without rewriting its text. Missing,
+changed, malformed, or unavailable details leave these fields unset and preserve
+the authorized APK.
+
+The source remains per-app: it does not add cross-app update batches or new
+settings. Anonymous ODS requests reuse one generated identity throughout the
+operation and do not require account credentials. Each ODS request has a
+40-second deadline; timeouts do not trigger restore or mirror authorization.
 
 ### `SourceProvider` (the service)
 

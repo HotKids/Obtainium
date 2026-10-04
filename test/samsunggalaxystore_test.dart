@@ -70,6 +70,8 @@ const _metadata = {
 };
 const _grant = {
   'productID': '000009060570',
+  'version': '9.4.02.7',
+  'versionCode': '940207000',
   'contentsSize': '106232505',
   'binaryArch': '32n64',
   'downLoadURI':
@@ -170,54 +172,140 @@ void main() {
     }
   });
 
-  test(
-    'CN stub failure uses ODS metadata then full APK authorization',
-    () async {
+  test('CN stub failure uses stateless ODS full APK authorization', () async {
+    final source = _OdsGalaxyStore([
+      Response('<result><resultCode>0</resultCode></result>', 200),
+      _ods(_metadata),
+      _ods(_grant),
+    ]);
+    final result = await source.getLatestAPKDetails(url, _china);
+    expect(result.version, '9.4.02.7');
+    expect(result.names.name, '三星生活助手');
+    expect(result.apkUrls.single.value, _grant['downLoadURI']);
+    expect(result.releaseDate, DateTime(2026, 9, 23));
+    expect(source.requests.length, 3); // No APK bytes requested here.
+    expect(source.requests.first.uri.host, 'vas.samsungapps.com');
+    final identities = <String>{};
+    for (var i = 1; i < 3; i++) {
+      final request = source.requests[i];
+      expect(request.uri.host, 'cn-ms.galaxyappstore.com');
+      expect(request.followRedirects, isFalse);
+      final id = i == 1 ? '2298' : '2311';
+      expect(request.uri.queryParameters['reqId'], id);
+      final document = XmlDocument.parse(request.body as String);
+      final root = document.rootElement;
+      expect(root.getAttribute('deviceModel'), 'SM-S9480');
+      expect(root.getAttribute('mcc'), '460');
+      expect(root.getAttribute('mnc'), '00');
+      expect(root.getAttribute('csc'), 'CHC');
+      final envelope = root.getElement('request')!;
+      expect(envelope.getAttribute('id'), id);
+      final params = {
+        for (final p in envelope.childElements)
+          p.getAttribute('name')!: p.innerText,
+      };
+      expect(int.parse(envelope.getAttribute('numParam')!), params.length);
+      identities.addAll([params['imei']!, params['extuk']!, params['stduk']!]);
+      expect(
+        params[i == 1 ? 'guid' : 'GUID'],
+        'com.samsung.android.app.sreminder',
+      );
+      if (i == 2) {
+        expect(envelope.getAttribute('name'), 'downloadEx2');
+        expect(params['productID'], '000009060570');
+        expect(params['dowloadType'], 'new');
+        expect(params['deepLinkSource'], 'N');
+        expect(params, isNot(contains('versionCode')));
+        expect(params, isNot(contains('loadType')));
+      }
+    }
+    expect(identities.length, 1);
+    expect(identities.single, matches(RegExp(r'^[a-f0-9]{16}$')));
+  });
+
+  test('rejected stateless authorization retains the restore path', () async {
+    final legacyGrant = Map<String, String>.from(_grant)
+      ..remove('version')
+      ..remove('versionCode');
+    for (final rejection in [
+      _ods({}, code: '4002'),
+      Response('Unavailable', 503),
+    ]) {
       final source = _OdsGalaxyStore([
-        Response('<result><resultCode>0</resultCode></result>', 200),
+        Response('Unavailable', 503),
         _ods(_metadata),
-        _ods(_grant),
+        rejection,
+        _ods(legacyGrant),
       ]);
       final result = await source.getLatestAPKDetails(url, _china);
       expect(result.version, '9.4.02.7');
-      expect(result.names.name, '三星生活助手');
       expect(result.apkUrls.single.value, _grant['downLoadURI']);
-      expect(result.releaseDate, DateTime(2026, 9, 23));
-      expect(source.requests.length, 3); // No APK bytes requested here.
-      expect(source.requests.first.uri.host, 'vas.samsungapps.com');
-      final identities = <String>{};
-      for (var i = 1; i < 3; i++) {
-        final request = source.requests[i];
-        expect(request.uri.host, 'cn-ms.galaxyappstore.com');
-        expect(request.followRedirects, isFalse);
-        final id = i == 1 ? '2298' : '2316';
-        expect(request.uri.queryParameters['reqId'], id);
-        final document = XmlDocument.parse(request.body as String);
-        final root = document.rootElement;
-        expect(root.getAttribute('deviceModel'), 'SM-S9480');
-        expect(root.getAttribute('mcc'), '460');
-        expect(root.getAttribute('mnc'), '00');
-        expect(root.getAttribute('csc'), 'CHC');
-        final envelope = root.getElement('request')!;
-        expect(envelope.getAttribute('id'), id);
-        final params = {
-          for (final p in envelope.childElements)
-            p.getAttribute('name')!: p.innerText,
-        };
-        expect(int.parse(envelope.getAttribute('numParam')!), params.length);
-        identities.addAll([
-          params['imei']!,
-          params['extuk']!,
-          params['stduk']!,
+      expect(
+        source.requests
+            .skip(1)
+            .map((request) => request.uri.queryParameters['reqId']),
+        ['2298', '2311', '2316'],
+      );
+      final request = XmlDocument.parse(
+        source.requests.last.body as String,
+      ).rootElement.getElement('request')!;
+      expect(request.getAttribute('name'), 'downloadForRestore');
+      final params = {
+        for (final node in request.childElements)
+          node.getAttribute('name')!: node.innerText,
+      };
+      expect(params['downloadType'], 'new');
+      expect(params['triggeredFrom'], 'DETAIL_PAGE');
+      expect(source.responses, isEmpty);
+    }
+  });
+
+  test(
+    'restore authorization still rejects mismatches and unsafe URLs',
+    () async {
+      for (final changes in [
+        {'productID': '99999'},
+        {'version': '1.0'},
+        {'versionCode': '1'},
+        {'contentsSize': '1'},
+        {'downLoadURI': 'https://galaxyappstore.com.evil.test/a.apk'},
+      ]) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(_metadata),
+          _ods({}, code: '4002'),
+          _ods({..._grant, ...changes}),
         ]);
-        expect(
-          params[i == 1 ? 'guid' : 'GUID'],
-          'com.samsung.android.app.sreminder',
+        await expectLater(
+          source.getLatestAPKDetails(url, _china),
+          throwsA(isA<ObtainiumError>()),
         );
-        if (i == 2) expect(params['productID'], '000009060570');
+        expect(source.requests.length, 4);
       }
-      expect(identities.length, 1);
-      expect(identities.single, matches(RegExp(r'^[a-f0-9]{16}$')));
+    },
+  );
+
+  test(
+    'stateless grants require version binding and never mask invalid XML',
+    () async {
+      for (final response in [
+        _ods(Map<String, String>.from(_grant)..remove('version')),
+        _ods(Map<String, String>.from(_grant)..remove('versionCode')),
+        Response('<html>error</html>', 200),
+      ]) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(_metadata),
+          response,
+          _ods(_grant),
+        ]);
+        await expectLater(
+          source.getLatestAPKDetails(url, _china),
+          throwsA(isA<ObtainiumError>()),
+        );
+        expect(source.requests.length, 3);
+        expect(source.responses.length, 1);
+      }
     },
   );
 

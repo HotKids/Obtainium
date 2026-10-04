@@ -229,30 +229,51 @@ class SamsungGalaxyStore extends AppSource {
       throw ObtainiumError(tr('samsungGalaxyStoreLoginRequired'));
     }
     if (metadata['installableYN'] != 'Y') throw NoAPKError();
-    final grant = await _odsRequest(
-      'downloadForRestore',
-      '2316',
-      {
-        'GUID': packageName,
-        'productID': productId,
-        ...identifiers,
-        'downloadType': 'new',
-        'autoUpdateYN': 'N',
-        'triggeredFrom': 'DETAIL_PAGE',
-        'predeployed': '0',
-        'deepLinkSource': '',
-        'resumeYN': 'N',
-      },
-      device,
-      identity,
-      settings,
-    );
+    final authorizationParams = {
+      'GUID': packageName,
+      'productID': productId,
+      ...identifiers,
+      'autoUpdateYN': 'N',
+      'predeployed': '0',
+      'resumeYN': 'N',
+    };
+    Map<String, String> grant;
+    var usedRestoreAuthorization = false;
+    try {
+      // versionCode here describes an installed version, not the target APK.
+      // Omitting it requests a full package without assuming local installation.
+      grant = await _odsRequest(
+        'downloadEx2',
+        '2311',
+        {...authorizationParams, 'dowloadType': 'new', 'deepLinkSource': 'N'},
+        device,
+        identity,
+        settings,
+      );
+    } on ObtainiumError catch (error) {
+      if (error.unexpected) rethrow;
+      usedRestoreAuthorization = true;
+      grant = await _odsRequest(
+        'downloadForRestore',
+        '2316',
+        {
+          ...authorizationParams,
+          'downloadType': 'new',
+          'triggeredFrom': 'DETAIL_PAGE',
+          'deepLinkSource': '',
+        },
+        device,
+        identity,
+        settings,
+      );
+    }
     final size = int.tryParse(grant['contentsSize'] ?? '') ?? 0;
     if (grant['productID'] != productId ||
         (grant.containsKey('GUID') && grant['GUID'] != packageName) ||
-        (grant.containsKey('version') && grant['version'] != version) ||
-        (grant.containsKey('versionCode') &&
-            int.tryParse(grant['versionCode']!) != versionCode) ||
+        ((!usedRestoreAuthorization || grant.containsKey('version')) &&
+            grant['version'] != version) ||
+        ((!usedRestoreAuthorization || grant.containsKey('versionCode')) &&
+            int.tryParse(grant['versionCode'] ?? '') != versionCode) ||
         size <= 0 ||
         (metadataSize != null && size != metadataSize)) {
       throw ObtainiumError(tr('unexpectedStoreApiResponse'), unexpected: true);

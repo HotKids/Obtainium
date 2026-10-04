@@ -31,7 +31,19 @@ class _OdsGalaxyStore extends SamsungGalaxyStore {
   }
 }
 
-Response _ods(Map<String, String> fields, {String code = '0'}) {
+class _StatusResponse extends Response {
+  var _status = 200;
+
+  _StatusResponse(int status) : super('', 200) {
+    // The http constructor rejects status 0, so override it after construction.
+    _status = status;
+  }
+
+  @override
+  int get statusCode => _status;
+}
+
+Response _ods(Map<String, String> fields, {String? code = '0'}) {
   final builder = XmlBuilder();
   builder.element(
     'SamsungProtocol',
@@ -39,7 +51,7 @@ Response _ods(Map<String, String> fields, {String code = '0'}) {
       builder.element(
         'errorInfo',
         nest: () {
-          builder.element('errorString', attributes: {'errorCode': code});
+          builder.element('errorString', attributes: {'errorCode': ?code});
         },
       );
       for (final field in fields.entries) {
@@ -269,7 +281,10 @@ void main() {
       ..remove('versionCode');
     for (final rejection in [
       _ods({}, code: '4002'),
+      _ods({}, code: '-9000'),
+      Response('Unavailable', 400),
       Response('Unavailable', 503),
+      Response('Unavailable', 599),
     ]) {
       final source = _OdsGalaxyStore([
         Response('Unavailable', 503),
@@ -299,6 +314,55 @@ void main() {
       expect(source.responses, isEmpty);
     }
   });
+
+  test('invalid HTTP statuses never retry restore authorization', () async {
+    for (final status in [0, 201, 302]) {
+      final source = _OdsGalaxyStore([
+        Response('Unavailable', 503),
+        _ods(_metadata),
+        _StatusResponse(status),
+        _ods(_grant),
+      ]);
+      await expectLater(
+        source.getLatestAPKDetails(url, _china),
+        throwsA(
+          isA<ObtainiumError>().having(
+            (error) => error.unexpected,
+            'unexpected',
+            isTrue,
+          ),
+        ),
+      );
+      expect(source.requests.length, 3);
+      expect(source.responses.length, 1);
+    }
+  });
+
+  test(
+    'missing or nonnumeric API codes never retry restore authorization',
+    () async {
+      for (final code in [null, '', 'invalid']) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          _ods(_metadata),
+          _ods({}, code: code),
+          _ods(_grant),
+        ]);
+        await expectLater(
+          source.getLatestAPKDetails(url, _china),
+          throwsA(
+            isA<ObtainiumError>().having(
+              (error) => error.unexpected,
+              'unexpected',
+              isTrue,
+            ),
+          ),
+        );
+        expect(source.requests.length, 3);
+        expect(source.responses.length, 1);
+      }
+    },
+  );
 
   test(
     'restore authorization still rejects mismatches and unsafe URLs',

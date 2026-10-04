@@ -150,6 +150,10 @@ class SamsungGalaxyStore extends AppSource {
       followRedirects: false,
       postBody: _odsEnvelope(method, requestId, params, device, identity),
     );
+    if (response.statusCode != 200 &&
+        (response.statusCode < 400 || response.statusCode > 599)) {
+      throw ObtainiumError(tr('unexpectedStoreApiResponse'), unexpected: true);
+    }
     ensureHttpSuccess(response);
     final fields = <String, String>{};
     try {
@@ -169,6 +173,9 @@ class SamsungGalaxyStore extends AppSource {
         }
       }
     } on FormatException {
+      throw ObtainiumError(tr('unexpectedStoreApiResponse'), unexpected: true);
+    }
+    if (!RegExp(r'^-?\d+$').hasMatch(fields['errorCode'] ?? '')) {
       throw ObtainiumError(tr('unexpectedStoreApiResponse'), unexpected: true);
     }
     if (fields['errorCode'] != '0') {

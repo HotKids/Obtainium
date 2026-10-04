@@ -642,6 +642,151 @@ void main() {
     expect(source.requests.last.uri.queryParameters['reqId'], '2290');
   });
 
+  testWidgets(
+    'stub timeout falls back with the same device and network profile',
+    (tester) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('dev.fluttercommunity.plus/device_info'),
+        (_) async => throw MissingPluginException(),
+      );
+      final source = _OdsGalaxyStore([
+        Completer<Response>().future,
+        _ods(_metadata),
+        _ods(_grant),
+      ]);
+      var completed = false;
+      Object? failure;
+      final urls = <String>[];
+      final operation = source
+          .getLatestAPKDetails(url, {..._china, 'mnc': '001'})
+          .then<void>(
+            (result) {
+              completed = true;
+              urls.addAll(result.apkUrls.map((entry) => entry.value));
+            },
+            onError: (Object error) {
+              completed = true;
+              failure = error;
+            },
+          );
+      await tester.pump();
+      expect(source.requests.single.uri.host, 'vas.samsungapps.com');
+      await tester.pump(const Duration(seconds: 39));
+      expect(completed, isFalse);
+      expect(source.requests.length, 1);
+      await tester.pump(const Duration(seconds: 1));
+      expect(completed, isTrue);
+      await operation;
+      expect(failure, isNull);
+      expect(urls, [_grant['downLoadURI']]);
+      for (final request in source.requests.skip(1)) {
+        final root = XmlDocument.parse(request.body as String).rootElement;
+        expect(root.getAttribute('deviceModel'), 'SM-S9480');
+        expect(root.getAttribute('csc'), 'CHC');
+        expect(root.getAttribute('mcc'), '460');
+        expect(root.getAttribute('mnc'), '001');
+        expect(request.uri.host, 'cn-ms.galaxyappstore.com');
+      }
+    },
+  );
+
+  test('stub rate limits preserve retry timing without starting ODS', () async {
+    for (final status in [403, 429]) {
+      final source = _OdsGalaxyStore([
+        Response('Rate limited', status, headers: {'retry-after': '600'}),
+        _ods(_metadata),
+        _ods(_grant),
+      ]);
+      await expectLater(
+        source.getLatestAPKDetails(url, _china),
+        throwsA(
+          isA<RateLimitError>().having(
+            (error) => error.remainingMinutes,
+            'remainingMinutes',
+            10,
+          ),
+        ),
+      );
+      expect(source.requests.length, 1);
+      expect(source.responses.length, 2);
+    }
+  });
+
+  test(
+    'ODS rate limits stop discovery and every authorization stage',
+    () async {
+      final discovery = _ods({
+        'countryURL': 'https://cn-ms.galaxyappstore.com/ods.as',
+        'countryCode': 'CHN',
+        'MCC': '460',
+      });
+      final cases = <String, List<Object>>{
+        '2300': [],
+        '2298': [discovery],
+        '2311': [discovery, _ods(_metadata)],
+        '2316': [discovery, _ods(_metadata), _ods({}, code: '4002')],
+        '2801': [
+          discovery,
+          _ods(_metadata),
+          _ods({}, code: '4002'),
+          _ods({}, code: '4002'),
+        ],
+      };
+      for (final entry in cases.entries) {
+        final source = _OdsGalaxyStore([
+          Response('Unavailable', 503),
+          ...entry.value,
+          Response('Rate limited', 429, headers: {'retry-after': '600'}),
+          _ods(_grant),
+        ], explicitDiscovery: true);
+        await expectLater(
+          source.getLatestAPKDetails(url, _china),
+          throwsA(
+            isA<RateLimitError>().having(
+              (error) => error.remainingMinutes,
+              'remainingMinutes',
+              10,
+            ),
+          ),
+        );
+        expect(source.requests.last.uri.queryParameters['reqId'], entry.key);
+        expect(source.responses.length, 1);
+      }
+    },
+  );
+
+  test(
+    'optional discovery and details rate limits keep a valid stub APK',
+    () async {
+      for (final requestId in ['2300', '2290']) {
+        final source = _OdsGalaxyStore(
+          [
+            _stubResponse(),
+            if (requestId == '2290')
+              _ods({
+                'countryURL': 'https://cn-ms.galaxyappstore.com/ods.as',
+                'countryCode': 'CHN',
+                'MCC': '460',
+              }),
+            Response('Rate limited', 429, headers: {'retry-after': '600'}),
+            _ods(_metadata),
+          ],
+          explicitDiscovery: true,
+          explicitDetails: true,
+        );
+        final result = await source.getLatestAPKDetails(url, _china);
+        expect(
+          result.apkUrls.single.value,
+          'https://apps.samsungapps.com/app_20260923000000.apk',
+        );
+        expect(result.releaseDate, isNull);
+        expect(result.changeLog, isNull);
+        expect(source.requests.last.uri.queryParameters['reqId'], requestId);
+        expect(source.responses.length, 1);
+      }
+    },
+  );
+
   test(
     'discovery upgrades only trusted same-region endpoints and safely falls back',
     () async {

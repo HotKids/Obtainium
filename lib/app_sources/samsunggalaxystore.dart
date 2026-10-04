@@ -291,7 +291,9 @@ class SamsungGalaxyStore extends AppSource {
       throw ObtainiumError(tr('unexpectedStoreApiResponse'), unexpected: true);
     }
     if (response.statusCode != 200) {
-      throw _OdsRejected(getObtainiumHttpError(response).message);
+      final error = getObtainiumHttpError(response);
+      if (error is RateLimitError) throw error;
+      throw _OdsRejected(error.message);
     }
     final fields = _xmlFields(
       response,
@@ -357,6 +359,8 @@ class SamsungGalaxyStore extends AppSource {
         return fallback;
       }
       return uri.replace(scheme: 'https', port: 443).toString();
+    } on RateLimitError {
+      rethrow;
     } catch (_) {
       return fallback;
     }
@@ -704,6 +708,8 @@ class SamsungGalaxyStore extends AppSource {
         device,
         additionalSettings,
       );
+    } on RateLimitError {
+      rethrow;
     } catch (_) {
       return _getOdsDetails(packageName, device, additionalSettings);
     }
@@ -728,7 +734,10 @@ class SamsungGalaxyStore extends AppSource {
             )
             .toString();
 
-    final Response response = await sourceRequest(vasUrl, additionalSettings);
+    final Response response = await sourceRequest(
+      vasUrl,
+      additionalSettings,
+    ).timeout(const Duration(seconds: 40));
     ensureHttpSuccess(response);
     final fields = _xmlFields(response, 'result');
     if (fields['resultCode'] != '1') {
@@ -757,11 +766,12 @@ class SamsungGalaxyStore extends AppSource {
       ),
     );
     final identity = _newIdentity();
-    final endpoint = await _discoverEndpoint(
-      device,
-      identity,
-      additionalSettings,
-    );
+    final String endpoint;
+    try {
+      endpoint = await _discoverEndpoint(device, identity, additionalSettings);
+    } on RateLimitError {
+      return result;
+    }
     return _withStoreDetails(
       result,
       packageName,

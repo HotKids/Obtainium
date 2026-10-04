@@ -225,8 +225,9 @@ request parameters.
 
 ODS queries `getDownloadInfo` (`2298`), then obtains a full APK through
 `downloadEx2` (`2311`). This stateless request omits the installed `versionCode`
-and uses the protocol spelling `dowloadType=new`. Only HTTP 400–599 or a valid
-nonzero API rejection may retry `downloadForRestore` (`2316`). If both reject a
+and uses the protocol spelling `dowloadType=new`. Only HTTP 400–599 responses
+that are not rate limits or a valid nonzero API rejection may retry
+`downloadForRestore` (`2316`). If both reject a
 China request with a known full-package size, `downloadInfoForTencent` (`2801`)
 is attempted once. Its result must identify the exact package, product, version,
 version code, and full size and use a Samsung HTTPS APK URL. Partial or third-party
@@ -253,8 +254,12 @@ the authorized APK.
 
 The source remains per-app: it does not add cross-app update batches or new
 settings. Anonymous ODS requests reuse one generated identity throughout the
-operation and do not require account credentials. Each ODS request has a
-40-second deadline; timeouts do not trigger restore or mirror authorization.
+operation and do not require account credentials. Stub and ODS requests have
+40-second deadlines. A stub timeout can use the same-profile ODS fallback;
+ODS timeouts do not trigger restore or mirror authorization. Rate limits retain
+their retry timing and stop the fallback chain. During optional discovery or
+store details, a rate limit preserves the already authorized APK and stops
+further detail requests.
 
 ### `SourceProvider` (the service)
 
